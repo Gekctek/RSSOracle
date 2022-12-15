@@ -22,6 +22,7 @@ using Sample.Shared.Service.Models;
 
 var configBuilder = new ConfigurationBuilder()
     .AddEnvironmentVariables()
+    .AddJsonFile("appsettings.json")
 #if DEBUG
     .AddUserSecrets<Program>();
 #endif
