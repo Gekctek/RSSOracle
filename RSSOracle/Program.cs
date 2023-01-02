@@ -43,31 +43,18 @@ while (true)
 {
     DateTime nextCheck = DateTime.UtcNow.AddMinutes(5);
     //Console.WriteLine("Getting channels...");
-    List<ChannelInfo> channels = await client.getChannels();
-
-
-    using (var httpClient = new HttpClient())
+    List<ChannelInfo>? channels = null;
+    try
     {
-        foreach (ChannelInfo channel in channels)
-        {
-            Feed feed = await FeedReader.ReadAsync(channel.id);
-
-            var channelId = CandidValueWithType.FromValueAndType(
-                CandidPrimitive.Text(channel.id),
-                new CandidPrimitiveType(PrimitiveType.Text)
-            );
-            List<Content> content = ParseContent(feed, channel.lastUpdated).ToList();
-
-            if(content.Any())
-            {
-                Console.WriteLine($"Channel: {channel.id}");
-                Console.WriteLine($"New Content Count: {content.Count}");
-                await Task.WhenAll(content.Select(async c =>
-                {
-                    await client.push(channel.id, c);
-                }));
-            }
-        }
+         channels = await client.getChannels();
+    }
+    catch(Exception ex)
+    {
+        Console.WriteLine($"Failed to fetch channels.\nError:\n{ex}");
+    }
+    if (channels != null)
+    {
+        await UpdateAsync(channels);
     }
     TimeSpan delay;
     try
@@ -80,6 +67,48 @@ while (true)
     }
     //Console.WriteLine("Done. Next check in " + delay);
     await Task.Delay(delay);
+}
+
+async Task UpdateAsync(List<ChannelInfo> channels)
+{
+    using (var httpClient = new HttpClient())
+    {
+        foreach (ChannelInfo channel in channels)
+        {
+            Feed feed;
+            try
+            {
+                feed = await FeedReader.ReadAsync(channel.id);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Failed to read feed '{channel.id}'.\nError:\n{ex}");
+                continue;
+            }
+            var channelId = CandidValueWithType.FromValueAndType(
+                CandidPrimitive.Text(channel.id),
+                new CandidPrimitiveType(PrimitiveType.Text)
+            );
+            List<Content> content = ParseContent(feed, channel.lastUpdated).ToList();
+
+            if (content.Any())
+            {
+                Console.WriteLine($"Channel: {channel.id}");
+                Console.WriteLine($"New Content Count: {content.Count}");
+                await Task.WhenAll(content.Select(async c =>
+                {
+                    try
+                    {
+                        await client.push(channel.id, c);
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"Failed to push feed '{channel.id}' to client.\nError:\n{ex}");
+                    }
+                }));
+            }
+        }
+    }
 }
 
 IEnumerable<Content> ParseContent(Feed feed, UnboundedInt? lastUpdated)
@@ -100,7 +129,7 @@ IEnumerable<Content> ParseContent(Feed feed, UnboundedInt? lastUpdated)
         {
             AtomFeedItem a => (new Content.bodyInfo { value = item.Content, format = "html" }, (string?)null),
             MediaRssFeedItem m => (null, m.Media.FirstOrDefault()?.Url),
-            _ => throw new NotImplementedException(),
+            _ => throw new NotImplementedException("Not RSS or Atom feed"),
         };
         yield return new Content
         {
